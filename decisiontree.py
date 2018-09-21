@@ -12,18 +12,23 @@ class Node(object):
         self.split_value = None
         self.depth = None
         self.positive_prob = None
+        self.chnt = None
+
 
 class ClassificationTree(object):
-    def __init__(self, max_depth=4, min_leaves=8):
+    #参数alpha用于决策树的减枝,leaves存放叶子节点,减枝时用
+    def __init__(self, max_depth=4, min_leaves=8, alpha = 0):
         self.max_depth = max_depth
         self.min_leaves = min_leaves
         self.feature_nums = None
         self.root = Node()
         self.root.depth = 0
+        self.alpha = alpha
+        self.leaves = []
 
     def fit(self, X, y):
         X = np.array(X)
-        y = np.array(y).reshape(-1,1)
+        y = np.array(y).reshape(-1, 1)
         self.train_x = X
         self.train_y = y
         self.sorted_feature = {}
@@ -32,6 +37,7 @@ class ClassificationTree(object):
             sorted_feature = sorted(list(set(self.train_x[:, i])))
             self.sorted_feature[i] = sorted_feature
         self.root.data_index = range(X.shape[0])
+        self.root.chnt = self.chnt_cal(y)
         self.root.positive_prob = sum(y) / len(y)
         self._feature_select(self.root)
 
@@ -51,10 +57,11 @@ class ClassificationTree(object):
         left_node.father = node
         right_node.father = node
         if left_node.depth > self.max_depth or right_node.depth > self.max_depth:
+            self.leaves.append(node)
             return
         data_indx = node.data_index
         data_nums = len(data_indx)
-        min_split_chnt = sys.maxint
+        min_split_chnt = sys.maxsize
         feature_select = None
         split_value = None
         split_success = False
@@ -72,6 +79,10 @@ class ClassificationTree(object):
                     continue
                 split_chnt = len(left_collect)/data_nums*self.chnt_cal([j for i, j in left_collect]) \
                     + len(right_collect)/data_nums*self.chnt_cal([j for i, j in right_collect])
+                left_node.chnt = self.chnt_cal([j for i, j in left_collect])
+                right_node.chnt = self.chnt_cal([j for i, j in right_collect])
+                if split_chnt >= node.chnt:
+                    continue
                 if split_chnt < min_split_chnt:
                     split_success = True
                     min_split_chnt = split_chnt
@@ -82,13 +93,33 @@ class ClassificationTree(object):
                     left_node.data_index = [i for i, j in left_collect]
                     right_node.data_index = [i for i, j in right_collect]
         if not split_success:
+            self.leaves.append(node)
             return
         node.left = left_node
         node.right = right_node
         node.split_feature = feature_select
         node.split_value = split_value
-        self.feature_select(left_node)
-        self.feature_select(right_node)
+        self._feature_select(left_node)
+        self._feature_select(right_node)
+
+    def cut_leaves(self):
+        father_node_set = set()
+        leaves_set = set(self.leaves)
+        for leave in self.leaves:
+            father_node_set.add(leave.father)
+        while len(father_node_set) > 0:
+            node = father_node_set.pop()
+            if node.left not in leaves_set or node.right not in leaves_set:
+                continue
+            left = node.left
+            right = node.right
+            if -(len(left.data_index)*left.chnt + len(right.data_index)*right.chnt) + len(node.data_index)*node.chnt - self.alpha \
+                > 0:
+                node.left = None
+                node.right = None
+                leaves_set.add(node)
+                father_node_set.add(node.father)
+
 
     def predict_prob(self, x):
         node = self.root
